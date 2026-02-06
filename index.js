@@ -5,7 +5,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const users = {}; // in-memory storage
+// In-memory user store
+const users = {};
 
 // ---------------- UTILITY FUNCTIONS ----------------
 
@@ -26,7 +27,7 @@ function distance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Predict future position
+// Predict future position (direction-aware)
 function futurePosition(user, seconds = 3) {
   const speed = user.speed || 0; // m/s
   const bearing = (user.direction || 0) * Math.PI / 180;
@@ -57,20 +58,34 @@ app.post("/update", (req, res) => {
     });
   }
 
-  // Store/update user
-  users[userId] = { lat, lng, speed, direction };
+  // Store/update user with timestamp
+  users[userId] = {
+    lat,
+    lng,
+    speed,
+    direction,
+    lastSeen: Date.now()
+  };
+
+  const NOW = Date.now();
+  const TIMEOUT_MS = 8000; // 🧹 remove inactive users after 8 seconds
+  const THRESHOLD_METERS = 0.5; // 🎯 very short range (GPS-limited)
 
   let warnings = [];
-
-  const THRESHOLD_METERS = 0.5; // 🎯 very short range
 
   for (const otherId in users) {
     if (otherId === userId) continue;
 
+    // 🧹 CLEANUP: remove stale users
+    if (NOW - users[otherId].lastSeen > TIMEOUT_MS) {
+      delete users[otherId];
+      continue;
+    }
+
     const u1 = users[userId];
     const u2 = users[otherId];
 
-    // 1️⃣ CURRENT distance
+    // 1️⃣ CURRENT distance (real-time)
     const currentDist = distance(
       u1.lat, u1.lng,
       u2.lat, u2.lng
@@ -88,6 +103,23 @@ app.post("/update", (req, res) => {
     // 🎯 DECISION LOGIC
     if (currentDist <= THRESHOLD_METERS) {
       warnings.push("⚠️ Collision detected (very close)");
-    } 
-    else if (futureDist <= THRESHOLD_METERS) {
+    } else if (futureDist <= THRESHOLD_METERS) {
       warnings.push("⚠️ Collision imminent");
+    }
+  }
+
+  res.json({
+    status: "ok",
+    warnings
+  });
+});
+
+// Health check
+app.get("/", (req, res) => {
+  res.send("Collision detection server running 🚀");
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Se
