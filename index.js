@@ -7,7 +7,9 @@ app.use(express.json());
 
 const users = {}; // in-memory storage
 
-// Utility: Haversine distance (meters)
+// ---------------- UTILITY FUNCTIONS ----------------
+
+// Haversine distance (meters)
 function distance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = deg => deg * Math.PI / 180;
@@ -24,14 +26,16 @@ function distance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Predict future position (simple math)
-function futurePosition(user, seconds = 5) {
-  const speed = user.speed; // m/s
-  const bearing = user.direction * Math.PI / 180;
+// Predict future position
+function futurePosition(user, seconds = 3) {
+  const speed = user.speed || 0; // m/s
+  const bearing = (user.direction || 0) * Math.PI / 180;
 
   const d = speed * seconds;
+
   const latOffset = (d * Math.cos(bearing)) / 111111;
-  const lonOffset = (d * Math.sin(bearing)) /
+  const lonOffset =
+    (d * Math.sin(bearing)) /
     (111111 * Math.cos(user.lat * Math.PI / 180));
 
   return {
@@ -40,13 +44,25 @@ function futurePosition(user, seconds = 5) {
   };
 }
 
-// API: receive user data
+// ---------------- API ----------------
+
 app.post("/update", (req, res) => {
   const { userId, lat, lng, speed, direction } = req.body;
 
+  // Basic validation
+  if (!userId || lat == null || lng == null) {
+    return res.json({
+      status: "error",
+      warnings: []
+    });
+  }
+
+  // Store/update user
   users[userId] = { lat, lng, speed, direction };
 
-  const warnings = [];
+  let warnings = [];
+
+  const THRESHOLD_METERS = 0.5; // 🎯 very short range
 
   for (const otherId in users) {
     if (otherId === userId) continue;
@@ -54,41 +70,24 @@ app.post("/update", (req, res) => {
     const u1 = users[userId];
     const u2 = users[otherId];
 
-    const f1 = futurePosition(u1);
-    const f2 = futurePosition(u2);
+    // 1️⃣ CURRENT distance
+    const currentDist = distance(
+      u1.lat, u1.lng,
+      u2.lat, u2.lng
+    );
 
-    const d = distance(f1.lat, f1.lng, f2.lat, f2.lng);
+    // 2️⃣ FUTURE distance (prediction)
+    const f1 = futurePosition(u1, 3);
+    const f2 = futurePosition(u2, 3);
 
-    if (d < 10) {
-      warnings.push(`Possible collision with ${otherId}`);
-    }
-  }
+    const futureDist = distance(
+      f1.lat, f1.lng,
+      f2.lat, f2.lng
+    );
 
-  res.json({
-    status: "ok",
-    warnings
-  });
-});
-
-app.get("/", (req, res) => {
-  res.send("Collision server running 🚀");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
-});
-
-app.get("/test-update", (req, res) => {
-  res.json({
-    message: "Use POST /update for real testing",
-    example: {
-      userId: "TEST_1",
-      lat: 12.97,
-      lng: 77.59,
-      speed: 2,
-      direction: 90
-    }
-  });
-});
-
+    // 🎯 DECISION LOGIC
+    if (currentDist <= THRESHOLD_METERS) {
+      warnings.push("⚠️ Collision detected (very close)");
+    } 
+    else if (futureDist <= THRESHOLD_METERS) {
+      warnings.push("⚠️ Collision imminent");
