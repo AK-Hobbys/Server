@@ -27,8 +27,8 @@ function distance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Predict future position (direction-aware)
-function futurePosition(user, seconds = 3) {
+// Predict future position (short lookahead)
+function futurePosition(user, seconds = 1.5) {
   const speed = user.speed || 0; // m/s
   const bearing = (user.direction || 0) * Math.PI / 180;
 
@@ -50,33 +50,33 @@ function futurePosition(user, seconds = 3) {
 app.post("/update", (req, res) => {
   const { userId, lat, lng, speed, direction } = req.body;
 
-  // Basic validation
   if (!userId || lat == null || lng == null) {
-    return res.json({
-      status: "error",
-      warnings: []
-    });
+    return res.json({ status: "error", warnings: [] });
   }
 
-  // Store/update user with timestamp
+  // Store/update user with timestamp + warning state
   users[userId] = {
     lat,
     lng,
     speed,
     direction,
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    inWarning: users[userId]?.inWarning || false
   };
 
   const NOW = Date.now();
-  const TIMEOUT_MS = 8000; // 🧹 remove inactive users after 8 seconds
-  const THRESHOLD_METERS = 0.5; // 🎯 very short range (GPS-limited)
+  const TIMEOUT_MS = 8000;
+
+  // 🔑 DEMO-TUNED VALUES
+  const ENTER_DIST = 2.0;  // meters → trigger warning
+  const EXIT_DIST  = 3.5;  // meters → clear warning
 
   let warnings = [];
 
   for (const otherId in users) {
     if (otherId === userId) continue;
 
-    // 🧹 CLEANUP: remove stale users
+    // Remove inactive users
     if (NOW - users[otherId].lastSeen > TIMEOUT_MS) {
       delete users[otherId];
       continue;
@@ -85,26 +85,36 @@ app.post("/update", (req, res) => {
     const u1 = users[userId];
     const u2 = users[otherId];
 
-    // 1️⃣ CURRENT distance (real-time)
     const currentDist = distance(
       u1.lat, u1.lng,
       u2.lat, u2.lng
     );
 
-    // 2️⃣ FUTURE distance (prediction)
-    const f1 = futurePosition(u1, 3);
-    const f2 = futurePosition(u2, 3);
+    const f1 = futurePosition(u1);
+    const f2 = futurePosition(u2);
 
     const futureDist = distance(
       f1.lat, f1.lng,
       f2.lat, f2.lng
     );
 
-    // 🎯 DECISION LOGIC
-    if (currentDist <= THRESHOLD_METERS) {
-      warnings.push("⚠️ Collision detected (very close)");
-    } else if (futureDist <= THRESHOLD_METERS) {
-      warnings.push("⚠️ Collision imminent");
+    // ---------------- DECISION LOGIC ----------------
+
+    // ENTER warning
+    if (!u1.inWarning &&
+        (currentDist <= ENTER_DIST || futureDist <= ENTER_DIST)) {
+      u1.inWarning = true;
+      warnings.push("⚠️ Possible collision very close");
+    }
+
+    // EXIT warning
+    else if (u1.inWarning && currentDist >= EXIT_DIST) {
+      u1.inWarning = false;
+    }
+
+    // STAY in warning
+    else if (u1.inWarning) {
+      warnings.push("⚠️ Possible collision very close");
     }
   }
 
@@ -119,7 +129,7 @@ app.get("/", (req, res) => {
   res.send("Collision detection server running 🚀");
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Se
+  console.log("Server running on port", PORT);
+});
