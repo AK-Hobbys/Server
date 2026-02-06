@@ -78,3 +78,17 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port", PORT);
 });
+
+app.get("/test-update", (req, res) => {
+  res.json({
+    message: "Use POST /update for real testing",
+    example: {
+      userId: "TEST_1",
+      lat: 12.97,
+      lng: 77.59,
+      speed: 2,
+      direction: 90
+    }
+  });
+});
+
